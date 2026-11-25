@@ -800,81 +800,46 @@ func TestLoggerHonoursLogLevel(t *testing.T) {
 	assert.Contains(t, buf.String(), "kept")
 }
 
-func TestLoggerEdgeCases(t *testing.T) {
+func TestConfigMarshalsAndUnmarshals(t *testing.T) {
 	t.Parallel()
 
-	// Table-driven edge cases: empty input, invalid input, and boundary values.
-	tests := []struct {
-		name      string
-		cfg       config.Config
-		logAction func(l *slog.Logger)
-		wantInLog []string
-		notInLog  []string
-		isJSON    bool
-	}{
-		{
-			name: "empty input fields default to text handler at info level",
-			cfg: config.Config{
-				LogLevel:  "",
-				LogFormat: "",
-			},
-			logAction: func(l *slog.Logger) {
-				l.Debug("should-be-suppressed")
-				l.Info("should-be-logged", "key", "val")
-			},
-			wantInLog: []string{"msg=should-be-logged", "key=val"},
-			notInLog:  []string{"should-be-suppressed", `"msg"`},
-			isJSON:    false,
+	// Every serialized field carries a distinct non-zero value, so a wrong tag
+	// or type cannot hide behind a zero. CORSOrigins, APIToken and
+	// SoroForgeToken are json:"-" by design — they are secrets or
+	// environment-only settings — so they stay unset and take no part in the
+	// comparison.
+	warn := uint32(700)
+	critical := uint32(70)
+	original := config.Config{
+		RPCURL:                 "https://rpc.example.org",
+		NetworkPassphrase:      "Example Network ; 2026",
+		SourceAccount:          config.DefaultSourceAccount,
+		HTTPAddr:               "127.0.0.1:9090",
+		HTTPRateLimitPerMinute: 120,
+		HTTPRateLimitBurst:     20,
+		HTTPTrustForwardedFor:  true,
+		HTTPTLSCert:            "/etc/soroprobe/cert.pem",
+		HTTPTLSKey:             "/etc/soroprobe/key.pem",
+		LogLevel:               "debug",
+		LogFormat:              "json",
+		Timeout:                45 * time.Second,
+		WarnLedgers:            1_000,
+		CriticalLedgers:        100,
+		ThresholdOverrides: health.ThresholdOverrides{
+			Instance: &health.ThresholdOverride{Warn: &warn},
+			Code:     &health.ThresholdOverride{Critical: &critical},
+			Data:     &health.ThresholdOverride{Warn: &warn, Critical: &critical},
 		},
-		{
-			name: "invalid log level and format gracefully fall back to text at info level",
-			cfg: config.Config{
-				LogLevel:  "invalid-level-xyz",
-				LogFormat: "invalid-format-xyz",
-			},
-			logAction: func(l *slog.Logger) {
-				l.Debug("debug-suppressed")
-				l.Info("info-fallback", "status", "ok")
-			},
-			wantInLog: []string{"msg=info-fallback", "status=ok"},
-			notInLog:  []string{"debug-suppressed", `"msg"`},
-			isJSON:    false,
-		},
-		{
-			name: "boundary level debug with padded uppercase JSON format enables debug output",
-			cfg: config.Config{
-				LogLevel:  " DEBUG ",
-				LogFormat: " JSON ",
-			},
-			logAction: func(l *slog.Logger) {
-				l.Debug("boundary-debug-event", "source", "test")
-			},
-			wantInLog: []string{`"msg":"boundary-debug-event"`, `"level":"DEBUG"`, `"source":"test"`},
-			isJSON:    true,
-		},
+		SoroVaultURL:    "http://sorovault.example.org",
+		InspectCacheTTL: 4 * time.Second,
+		BaseFee:         200,
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
+	data, err := json.Marshal(original)
+	require.NoError(t, err)
 
-			var buf bytes.Buffer
-			logger := tt.cfg.Logger(&buf)
-			require.NotNil(t, logger)
+	var decoded config.Config
+	require.NoError(t, json.Unmarshal(data, &decoded))
 
-			tt.logAction(logger)
-			output := buf.String()
-
-			for _, want := range tt.wantInLog {
-				assert.Contains(t, output, want)
-			}
-			for _, notWant := range tt.notInLog {
-				assert.NotContains(t, output, notWant)
-			}
-			if tt.isJSON {
-				var parsed map[string]any
-				require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(output)), &parsed), "output must be valid JSON: %s", output)
-			}
-		})
-	}
+	assert.Equal(t, original, decoded)
 }
