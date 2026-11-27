@@ -99,6 +99,7 @@ well-formed transaction, and that account need not exist or hold a balance.`,
 		newVerifyCmd(opts),
 		newServeCmd(opts),
 		newVersionCmd(),
+		newBalanceCmd(opts),
 	)
 	return cmd, opts
 }
